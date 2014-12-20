@@ -113,8 +113,10 @@ void *process_thread(void *data)
 	double gamma = args -> gamma;
 	std::string infile;
 	std::string outfile;
+	bool exists;
 	for (unsigned int i = thread_id; i < input -> size(); i += modulus)
 	{
+		exists = false;
 		infile = (*input)[i];
 		gen_edit_filename(infile, outfile);
 		DIR *editdir = opendir("img/edit");
@@ -123,11 +125,14 @@ void *process_thread(void *data)
 		{
 			if (strcmp(file -> d_name, outfile.c_str()) == 0)
 			{
-				continue;
+				exists = true;
+				break;
 			}
 		}
 		infile = "img/" + infile;
 		outfile = "img/edit/" + outfile;
+		if (exists) { continue; }
+		else { std::cout << "Processing " << infile << std::endl; }
 		FIBITMAP *input = FreeImage_Load(FIF_PNG, infile.c_str());
 		if (input == NULL)
 		{

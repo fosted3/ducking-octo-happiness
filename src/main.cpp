@@ -54,6 +54,7 @@ bool process_image(std::string infile, std::string outfile, double brightness, d
 			return false;
 		}
 	}
+	closedir(editdir);
 	infile = "img/" + infile;
 	outfile = "img/edit/" + outfile;
 	FIBITMAP *input = FreeImage_Load(FIF_PNG, infile.c_str());
@@ -129,6 +130,7 @@ void *process_thread(void *data)
 				break;
 			}
 		}
+		closedir(editdir);
 		infile = "img/" + infile;
 		outfile = "img/edit/" + outfile;
 		if (exists) { continue; }
@@ -198,6 +200,8 @@ void process_threaded(std::vector<std::string> *input, double brightness, double
 	{
 		pthread_join(threads[i], NULL);
 	}
+	delete[] threads;
+	delete[] td;
 }
 
 int main(int argc, char **argv)
@@ -216,6 +220,7 @@ int main(int argc, char **argv)
 		std::cerr << "Can't open ./img/edit." << std::endl;
 		exit(1);
 	}
+	closedir(editdir);
 	if (argc < 2)
 	{
 		std::cerr << "Usage: " << argv[0] << " [brightness] <brightness> [gamma] <gamma>" << std::endl;
@@ -273,6 +278,7 @@ int main(int argc, char **argv)
 		}
 		process_threaded(&input, brightness, gamma, threads);
 	}
+	closedir(imgdir);
 	FreeImage_DeInitialise();
 	return 0;
 }

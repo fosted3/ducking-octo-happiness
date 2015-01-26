@@ -5,13 +5,13 @@
 #include <string.h>
 #include <cmath>
 #include <cassert>
-#include <vector>
+#include <queue>
+#include <mutex>
 
 struct thread_data
 {
-	std::vector<std::string> *input;
-	unsigned int thread_id;
-	unsigned int modulus;
+	std::queue<std::string> *input;
+	std::mutex *lock;
 	double brightness;
 	double gamma;
 };
@@ -107,18 +107,25 @@ void *process_thread(void *data)
 {
 	struct thread_data *args;
 	args = (struct thread_data*) data;
-	std::vector<std::string> *input = args -> input;
-	unsigned int thread_id = args -> thread_id;
-	unsigned int modulus = args -> modulus;
+	std::queue<std::string> *input = args -> input;
+	std::mutex *lock = args -> lock;
 	double brightness = args -> brightness;
 	double gamma = args -> gamma;
 	std::string infile;
 	std::string outfile;
 	bool exists;
-	for (unsigned int i = thread_id; i < input -> size(); i += modulus)
+	while (true)
 	{
 		exists = false;
-		infile = (*input)[i];
+		while (!(lock -> try_lock()));
+		if (input -> empty())
+		{
+			lock -> unlock();
+			break;
+		}
+		infile = input -> front();
+		input -> pop();
+		lock -> unlock();
 		gen_edit_filename(infile, outfile);
 		DIR *editdir = opendir("img/edit");
 		struct dirent *file;
@@ -134,24 +141,35 @@ void *process_thread(void *data)
 		infile = "img/" + infile;
 		outfile = "img/edit/" + outfile;
 		if (exists) { continue; }
-		else { std::cout << "Processing " << infile << std::endl; }
+		else
+		{
+			while (!(lock -> try_lock()));
+			std::cout << "Processing " << infile << std::endl;
+			lock -> unlock();
+		}
 		FIBITMAP *input = FreeImage_Load(FIF_PNG, infile.c_str());
 		if (input == NULL)
 		{
+			while (!(lock -> try_lock()));
 			std::cerr << "Failed to load " << infile << std::endl;
+			lock -> unlock();
 			exit(1);
 		}
 		if (!FreeImage_Save(FIF_PNG, input, outfile.c_str()))
 		{
 			FreeImage_Unload(input);
+			while (!(lock -> try_lock()));
 			std::cerr << "Failed to save " << outfile << std::endl;
+			lock -> unlock();
 			exit(1);
 		}
 		FreeImage_Unload(input);
 		FIBITMAP *output = FreeImage_Load(FIF_PNG, outfile.c_str());
 		if (output == NULL)
 		{
+			while (!(lock -> try_lock()));
 			std::cerr << "Failed to load " << outfile << std::endl;
+			lock -> unlock();
 			exit(1);
 		}
 		unsigned int img_w = FreeImage_GetWidth(output);
@@ -174,24 +192,27 @@ void *process_thread(void *data)
 		if (!FreeImage_Save(FIF_PNG, output, outfile.c_str()))
 		{
 			FreeImage_Unload(input);
+			while (!(lock -> try_lock()));
 			std::cerr << "Failed to save " << outfile << std::endl;
+			lock -> unlock();
 			exit(1);
 		}
 		FreeImage_Unload(output);
+		while (!(lock -> try_lock()));
 		std::cout << "Saved " << outfile << std::endl;
+		lock -> unlock();
 	}
 	pthread_exit(NULL);
 }
 
-void process_threaded(std::vector<std::string> *input, double brightness, double gamma, unsigned int num_threads)
+void process_threaded(std::queue<std::string> *input, std::mutex *lock, double brightness, double gamma, unsigned int num_threads)
 {
 	pthread_t *threads = new pthread_t[num_threads];
 	struct thread_data *td = new thread_data[num_threads];
 	for (unsigned int i = 0; i < num_threads; i++)
 	{
 		td[i].input = input;
-		td[i].thread_id = i;
-		td[i].modulus = num_threads;
+		td[i].lock = lock;
 		td[i].brightness = brightness;
 		td[i].gamma = gamma;
 		create_thread(&threads[i], NULL, process_thread, (void*) &td[i]);
@@ -251,32 +272,38 @@ int main(int argc, char **argv)
 		}
 	}
 	FreeImage_Initialise();
+	std::string temp;
 	if (threads == 1)
 	{
 		while ((file = readdir(imgdir)) != NULL)
 		{
 			if (ispng(file -> d_name))
 			{
-				std::cout << "Processing " << file -> d_name << std::endl;
-				gen_edit_filename(file -> d_name, outfile);
-				if (process_image(file -> d_name, outfile.c_str(), brightness, gamma))
+				gen_edit_filename(file -> d_name, temp);
+				if (!ispng(temp))
 				{
-					std::cout << "Saved " << outfile << std::endl;
+					std::cout << "Processing " << file -> d_name << std::endl;
+					gen_edit_filename(file -> d_name, outfile);
+					if (process_image(file -> d_name, outfile.c_str(), brightness, gamma))
+					{
+						std::cout << "Saved " << outfile << std::endl;
+					}
 				}
 			}
 		}
 	}
 	else
 	{
-		std::vector<std::string> input;
+		std::queue<std::string> input;
+		std::mutex lock;
 		while ((file = readdir(imgdir)) != NULL)
 		{
 			if (ispng(file -> d_name))
 			{
-				input.push_back(file -> d_name);
+				input.push(file -> d_name);
 			}
 		}
-		process_threaded(&input, brightness, gamma, threads);
+		process_threaded(&input, &lock, brightness, gamma, threads);
 	}
 	closedir(imgdir);
 	FreeImage_DeInitialise();
